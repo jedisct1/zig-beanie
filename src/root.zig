@@ -92,39 +92,206 @@ pub fn Beanie(comptime rounds: u4) type {
 pub fn BeanieVec(comptime N: comptime_int, comptime rounds: u4) type {
     comptime std.debug.assert(rounds >= 1 and rounds <= 9);
     const r: usize = rounds;
-    const Scalar = Beanie(rounds);
-
     return struct {
         pub const Vec = @Vector(N, u32);
         const ShiftAmt = @Vector(N, u5);
 
         round_keys: [r + 1]Vec,
 
+        const Wide = [4]Vec;
+
         pub fn init(key: u128, tweaks: [N]u128) @This() {
-            var rk_arrays: [r + 1][N]u32 = undefined;
+            return .{ .round_keys = keyExpansionVec(tweakKeyScheduleVec(key, tweaks)) };
+        }
+
+        fn tweakKeyScheduleVec(key: u128, tweaks: [N]u128) Wide {
+            var w = tweaksToWide(tweaks);
+            const kw = splitU128(key);
+            for (0..r) |round| {
+                w = xorWide(w, kw);
+                w = xorWideConst(w, round_constants[round]);
+                w = applySboxWide(false, w);
+                w = princeMixLayerWide(w);
+                w = princeShiftRowsWide(w);
+                w = feistelWide(w);
+                w = scheduleShiftWide(w);
+            }
+            w = xorWide(w, kw);
+            w = xorWideConst(w, round_constants[r]);
+            return w;
+        }
+
+        fn keyExpansionVec(w: Wide) [r + 1]Vec {
+            var rk: [r + 1]Vec = undefined;
+            rk[0] = w[0];
+            rk[1] = w[1];
+            if (r + 1 > 2) rk[2] = w[2];
+            if (r + 1 > 3) rk[3] = w[3];
+            if (r + 1 > 4) rk[4] = w[0] ^ w[1];
+            if (r + 1 > 5) rk[5] = w[2] ^ w[3];
+            if (r + 1 > 6) rk[6] = w[0] ^ w[2];
+            if (r + 1 > 7) rk[7] = w[1] ^ w[3];
+            if (r + 1 > 8) rk[8] = w[0] ^ w[3];
+            if (r + 1 > 9) rk[9] = w[1] ^ w[2];
+            return rk;
+        }
+
+        fn tweaksToWide(tweaks: [N]u128) Wide {
+            var words: [4][N]u32 = undefined;
             for (0..N) |i| {
-                const expanded = Scalar.keyExpansion(Scalar.tweakKeySchedule(key, tweaks[i]));
-                for (0..r + 1) |rk_idx| {
-                    rk_arrays[rk_idx][i] = expanded[rk_idx];
+                words[0][i] = @truncate(tweaks[i] >> 96);
+                words[1][i] = @truncate(tweaks[i] >> 64);
+                words[2][i] = @truncate(tweaks[i] >> 32);
+                words[3][i] = @truncate(tweaks[i]);
+            }
+            return .{ words[0], words[1], words[2], words[3] };
+        }
+
+        fn splitU128(v: u128) Wide {
+            return .{
+                @splat(@as(u32, @truncate(v >> 96))),
+                @splat(@as(u32, @truncate(v >> 64))),
+                @splat(@as(u32, @truncate(v >> 32))),
+                @splat(@as(u32, @truncate(v))),
+            };
+        }
+
+        fn xorWide(a: Wide, b: Wide) Wide {
+            return .{ a[0] ^ b[0], a[1] ^ b[1], a[2] ^ b[2], a[3] ^ b[3] };
+        }
+
+        fn xorWideConst(w: Wide, constant: u128) Wide {
+            return xorWide(w, splitU128(constant));
+        }
+
+        fn applySboxBitslice(comptime inverse: bool, state: Vec) Vec {
+            const M: Vec = @splat(0x11111111);
+            const s1: ShiftAmt = @splat(1);
+            const s2: ShiftAmt = @splat(2);
+            const s3: ShiftAmt = @splat(3);
+
+            const b0 = state & M;
+            const b1 = (state >> s1) & M;
+            const b2 = (state >> s2) & M;
+            const b3 = (state >> s3) & M;
+
+            const a01 = b0 & b1;
+            const a02 = b0 & b2;
+            const a12 = b1 & b2;
+            const a03 = b0 & b3;
+            const a13 = b1 & b3;
+            const a23 = b2 & b3;
+            const a012 = a01 & b2;
+            const a013 = a01 & b3;
+            const a023 = a02 & b3;
+            const a123 = a12 & b3;
+
+            const o0, const o1, const o2, const o3 = if (!inverse) .{
+                a01 ^ a12 ^ b3 ^ a013,
+                b1 ^ b2 ^ a02 ^ a012 ^ a03 ^ a13 ^ a023,
+                b0 ^ a01 ^ b3 ^ a03 ^ a023,
+                a01 ^ b2 ^ a012 ^ a03 ^ a13 ^ a013 ^ a23 ^ a023 ^ a123,
+            } else .{
+                b0 ^ b2 ^ a12 ^ a012 ^ b3 ^ a13 ^ a23,
+                b1 ^ a012 ^ b3 ^ a013 ^ a23 ^ a023,
+                b0 ^ a01 ^ a02 ^ a12 ^ a012 ^ b3 ^ a03 ^ a123,
+                b0 ^ a12 ^ a012 ^ a03 ^ a023,
+            };
+
+            return o0 | (o1 << s1) | (o2 << s2) | (o3 << s3);
+        }
+
+        fn applySboxWide(comptime inverse: bool, w: Wide) Wide {
+            return .{
+                applySboxBitslice(inverse, w[0]),
+                applySboxBitslice(inverse, w[1]),
+                applySboxBitslice(inverse, w[2]),
+                applySboxBitslice(inverse, w[3]),
+            };
+        }
+
+        fn feistelWide(w: Wide) Wide {
+            return .{ w[0] ^ w[1], w[2], w[2] ^ w[3], w[0] };
+        }
+
+        fn princeShiftRowsWide(w: Wide) Wide {
+            return .{
+                princeShiftRowsWord(w[0], w[1]),
+                princeShiftRowsWord(w[1], w[0]),
+                princeShiftRowsWord(w[2], w[3]),
+                princeShiftRowsWord(w[3], w[2]),
+            };
+        }
+
+        fn princeShiftRowsWord(self_w: Vec, other: Vec) Vec {
+            const s16: ShiftAmt = @splat(16);
+            var result = self_w & @as(Vec, @splat(@as(u32, 0xF000F000)));
+            result |= (self_w & @as(Vec, @splat(@as(u32, 0x000F0000)))) >> s16;
+            result |= (self_w & @as(Vec, @splat(@as(u32, 0x00000F00)))) << s16;
+            result |= other & @as(Vec, @splat(@as(u32, 0x00F000F0)));
+            result |= (other & @as(Vec, @splat(@as(u32, 0x0F000000)))) >> s16;
+            result |= (other & @as(Vec, @splat(@as(u32, 0x0000000F)))) << s16;
+            return result;
+        }
+
+        fn scheduleShiftWide(w: Wide) Wide {
+            const m0: Vec = @splat(@as(u32, 0x000F000F));
+            const m1: Vec = @splat(@as(u32, 0x00F000F0));
+            const m2: Vec = @splat(@as(u32, 0x0F000F00));
+            const m3: Vec = @splat(@as(u32, 0xF000F000));
+            return .{
+                (w[3] & m0) | (w[2] & m1) | (w[1] & m2) | (w[0] & m3),
+                (w[0] & m0) | (w[3] & m1) | (w[2] & m2) | (w[1] & m3),
+                (w[1] & m0) | (w[0] & m1) | (w[3] & m2) | (w[2] & m3),
+                (w[2] & m0) | (w[1] & m1) | (w[0] & m2) | (w[3] & m3),
+            };
+        }
+
+        fn princeMixHalfVec(comptime rotation: u2, col: Vec) Vec {
+            const masks = [4]u32{ 0b0111, 0b1011, 0b1101, 0b1110 };
+            const s4: ShiftAmt = @splat(4);
+            const s8: ShiftAmt = @splat(8);
+            const s12: ShiftAmt = @splat(12);
+            const nibble_mask: Vec = @splat(0xf);
+            const c: [4]Vec = .{
+                (col >> s12) & nibble_mask,
+                (col >> s8) & nibble_mask,
+                (col >> s4) & nibble_mask,
+                col & nibble_mask,
+            };
+            var result: Vec = @splat(0);
+            inline for (0..4) |row| {
+                var nibble: Vec = @splat(0);
+                inline for (0..4) |k| {
+                    nibble ^= c[k] & @as(Vec, @splat(masks[(rotation + row + k) % 4]));
                 }
+                const shift: ShiftAmt = @splat(@as(u5, 4 * (3 - row)));
+                result |= nibble << shift;
             }
-            var round_keys: [r + 1]Vec = undefined;
-            for (0..r + 1) |rk_idx| {
-                round_keys[rk_idx] = rk_arrays[rk_idx];
-            }
-            return .{ .round_keys = round_keys };
+            return result;
+        }
+
+        fn princeMixLayerWide(w: Wide) Wide {
+            const s16: ShiftAmt = @splat(16);
+            const mask16: Vec = @splat(0xffff);
+            return .{
+                princeMixHalfVec(0, w[0] >> s16) << s16 | princeMixHalfVec(1, w[0] & mask16),
+                princeMixHalfVec(1, w[1] >> s16) << s16 | princeMixHalfVec(0, w[1] & mask16),
+                princeMixHalfVec(0, w[2] >> s16) << s16 | princeMixHalfVec(1, w[2] & mask16),
+                princeMixHalfVec(1, w[3] >> s16) << s16 | princeMixHalfVec(0, w[3] & mask16),
+            };
         }
 
         pub fn encrypt(self: @This(), blocks: Vec) Vec {
             var state = blocks;
             for (self.round_keys[0 .. r - 1]) |rk| {
                 state ^= rk;
-                state = applySboxVec(sbox_table, state);
+                state = applySboxBitslice(false, state);
                 state = shiftRowsVec(state);
                 state = mixColumnsVec(state);
             }
             state ^= self.round_keys[r - 1];
-            state = applySboxVec(sbox_table, state);
+            state = applySboxBitslice(false, state);
             state = shiftRowsVec(state);
             state ^= self.round_keys[r];
             return state;
@@ -134,30 +301,15 @@ pub fn BeanieVec(comptime N: comptime_int, comptime rounds: u4) type {
             var state = blocks;
             state ^= self.round_keys[r];
             state = shiftRowsVec(state);
-            state = applySboxVec(sbox_inv_table, state);
+            state = applySboxBitslice(true, state);
             state ^= self.round_keys[r - 1];
             for (0..r - 1) |i| {
                 state = mixColumnsVec(state);
                 state = shiftRowsVec(state);
-                state = applySboxVec(sbox_inv_table, state);
+                state = applySboxBitslice(true, state);
                 state ^= self.round_keys[r - 2 - i];
             }
             return state;
-        }
-
-        fn applySboxVec(table: [16]u4, state: Vec) Vec {
-            var result: Vec = @splat(0);
-            inline for (0..8) |i| {
-                const sh: ShiftAmt = @splat(4 * i);
-                const nibble = (state >> sh) & @as(Vec, @splat(0xf));
-                var mapped: Vec = @splat(0);
-                inline for (0..16) |v| {
-                    const mask = nibble == @as(Vec, @splat(@as(u32, v)));
-                    mapped |= @select(u32, mask, @as(Vec, @splat(@as(u32, table[v]))), @as(Vec, @splat(0)));
-                }
-                result |= mapped << sh;
-            }
-            return result;
         }
 
         fn shiftRowsVec(state: Vec) Vec {
