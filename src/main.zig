@@ -12,7 +12,7 @@ pub fn main(init: std.process.Init) !void {
     const tweak: u128 = 0xdeadbeefcafebabe0123456789abcdef;
     const plaintext: u32 = 0x12345678;
 
-    const b = Beanie.init(key, tweak, 9);
+    const b = Beanie(9).init(key, tweak);
     const ciphertext = b.encrypt(plaintext);
     const decrypted = b.decrypt(ciphertext);
 
