@@ -470,6 +470,39 @@ fn scheduleShift(state: u128) u128 {
     return result;
 }
 
+pub fn BeanieCtr(comptime N: comptime_int, comptime rounds: u4) type {
+    comptime std.debug.assert(rounds >= 1 and rounds <= 9);
+    const Vec = @Vector(N, u32);
+
+    return struct {
+        round_keys: [rounds + 1]u32,
+        counter: u32,
+
+        pub fn init(key: u128, nonce: u128, initial_counter: u32) @This() {
+            const b = Beanie(rounds).init(key, nonce);
+            return .{ .round_keys = b.round_keys, .counter = initial_counter };
+        }
+
+        pub fn xor(self: *@This(), plaintext: Vec) Vec {
+            const bv = BeanieVec(N, rounds){ .round_keys = splatRoundKeys(self.round_keys) };
+            var counters: [N]u32 = undefined;
+            for (0..N) |i| {
+                counters[i] = self.counter +% @as(u32, @intCast(i));
+            }
+            self.counter +%= N;
+            return plaintext ^ bv.encrypt(counters);
+        }
+
+        fn splatRoundKeys(rk: [rounds + 1]u32) [rounds + 1]Vec {
+            var result: [rounds + 1]Vec = undefined;
+            for (0..rounds + 1) |i| {
+                result[i] = @splat(rk[i]);
+            }
+            return result;
+        }
+    };
+}
+
 const testing = std.testing;
 
 test "substitution" {
@@ -633,6 +666,36 @@ test "BeanieVec encrypt/decrypt roundtrip" {
     const bv = BV.init(key, tweaks);
     const ciphertext = bv.encrypt(plaintext);
     try testing.expectEqual(plaintext, bv.decrypt(ciphertext));
+}
+
+test "BeanieCtr encrypt/decrypt roundtrip" {
+    const key: u128 = 0x0123456789abcdeffedcba9876543210;
+    const nonce: u128 = 0xdeadbeefcafebabe0123456789abcdef;
+    const N = 8;
+    const plaintext: @Vector(N, u32) = .{ 0xdeadbeef, 0xcafebabe, 0x12345678, 0xffffffff, 0x00000000, 0xabcdef01, 0x99999999, 0x55aa55aa };
+
+    inline for (1..10) |rounds| {
+        var enc = BeanieCtr(N, rounds).init(key, nonce, 0);
+        var dec = BeanieCtr(N, rounds).init(key, nonce, 0);
+        const ciphertext = enc.xor(plaintext);
+        const decrypted = dec.xor(ciphertext);
+        try testing.expectEqual(plaintext, decrypted);
+    }
+}
+
+test "BeanieCtr sequential blocks match scalar" {
+    const key: u128 = 0x0123456789abcdeffedcba9876543210;
+    const nonce: u128 = 0xdeadbeefcafebabe0123456789abcdef;
+    const b = Beanie(9).init(key, nonce);
+
+    const N = 4;
+    var ctr = BeanieCtr(N, 9).init(key, nonce, 0);
+    const zeros: @Vector(N, u32) = @splat(0);
+    const keystream: [N]u32 = ctr.xor(zeros);
+
+    for (0..N) |i| {
+        try testing.expectEqual(b.encrypt(@intCast(i)), keystream[i]);
+    }
 }
 
 test "BeanieVec different N values" {
