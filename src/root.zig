@@ -32,7 +32,7 @@ pub fn Beanie(comptime rounds: u4) type {
                 state ^= rk;
                 state = applySbox(u32, sbox_table, state);
                 state = shiftRows(state);
-                state = @as(u32, mixColumn(@truncate(state >> 16))) << 16 | mixColumn(@truncate(state));
+                state = (@as(u32, mixColumn(@truncate(state >> 16))) << 16) | mixColumn(@truncate(state));
             }
             state ^= self.round_keys[r - 1];
             state = applySbox(u32, sbox_table, state);
@@ -48,7 +48,7 @@ pub fn Beanie(comptime rounds: u4) type {
             state = applySbox(u32, sbox_inv_table, state);
             state ^= self.round_keys[r - 1];
             for (0..r - 1) |i| {
-                state = @as(u32, mixColumn(@truncate(state >> 16))) << 16 | mixColumn(@truncate(state));
+                state = (@as(u32, mixColumn(@truncate(state >> 16))) << 16) | mixColumn(@truncate(state));
                 state = shiftRows(state);
                 state = applySbox(u32, sbox_inv_table, state);
                 state ^= self.round_keys[r - 2 - i];
@@ -275,10 +275,10 @@ pub fn BeanieVec(comptime N: comptime_int, comptime rounds: u4) type {
             const s16: ShiftAmt = @splat(16);
             const mask16: Vec = @splat(0xffff);
             return .{
-                princeMixHalfVec(0, w[0] >> s16) << s16 | princeMixHalfVec(1, w[0] & mask16),
-                princeMixHalfVec(1, w[1] >> s16) << s16 | princeMixHalfVec(0, w[1] & mask16),
-                princeMixHalfVec(0, w[2] >> s16) << s16 | princeMixHalfVec(1, w[2] & mask16),
-                princeMixHalfVec(1, w[3] >> s16) << s16 | princeMixHalfVec(0, w[3] & mask16),
+                (princeMixHalfVec(0, w[0] >> s16) << s16) | princeMixHalfVec(1, w[0] & mask16),
+                (princeMixHalfVec(1, w[1] >> s16) << s16) | princeMixHalfVec(0, w[1] & mask16),
+                (princeMixHalfVec(0, w[2] >> s16) << s16) | princeMixHalfVec(1, w[2] & mask16),
+                (princeMixHalfVec(1, w[3] >> s16) << s16) | princeMixHalfVec(0, w[3] & mask16),
             };
         }
 
@@ -332,9 +332,9 @@ pub fn BeanieVec(comptime N: comptime_int, comptime rounds: u4) type {
             const xt3 = gfDoubleVec(xt2);
             var result: Vec = @splat(0);
             if (y & 1 != 0) result ^= x;
-            if (y >> 1 & 1 != 0) result ^= xt1;
-            if (y >> 2 & 1 != 0) result ^= xt2;
-            if (y >> 3 & 1 != 0) result ^= xt3;
+            if ((y >> 1) & 1 != 0) result ^= xt1;
+            if ((y >> 2) & 1 != 0) result ^= xt2;
+            if ((y >> 3) & 1 != 0) result ^= xt3;
             return result;
         }
 
@@ -347,16 +347,16 @@ pub fn BeanieVec(comptime N: comptime_int, comptime rounds: u4) type {
             const c1 = (col >> s8) & mask;
             const c2 = (col >> s4) & mask;
             const c3 = col & mask;
-            return (gfMulVec(c0, 0x2) ^ gfMulVec(c1, 0x1) ^ gfMulVec(c2, 0x1) ^ gfMulVec(c3, 0x9)) << s12 |
-                (gfMulVec(c0, 0x1) ^ gfMulVec(c1, 0x4) ^ gfMulVec(c2, 0xf) ^ gfMulVec(c3, 0x1)) << s8 |
-                (gfMulVec(c0, 0xd) ^ gfMulVec(c1, 0x9) ^ gfMulVec(c2, 0x4) ^ gfMulVec(c3, 0x1)) << s4 |
+            return ((gfMulVec(c0, 0x2) ^ gfMulVec(c1, 0x1) ^ gfMulVec(c2, 0x1) ^ gfMulVec(c3, 0x9)) << s12) |
+                ((gfMulVec(c0, 0x1) ^ gfMulVec(c1, 0x4) ^ gfMulVec(c2, 0xf) ^ gfMulVec(c3, 0x1)) << s8) |
+                ((gfMulVec(c0, 0xd) ^ gfMulVec(c1, 0x9) ^ gfMulVec(c2, 0x4) ^ gfMulVec(c3, 0x1)) << s4) |
                 (gfMulVec(c0, 0x1) ^ gfMulVec(c1, 0xd) ^ gfMulVec(c2, 0x1) ^ gfMulVec(c3, 0x2));
         }
 
         fn mixColumnsVec(state: Vec) Vec {
             const s16: ShiftAmt = @splat(16);
             const mask16: Vec = @splat(0xffff);
-            return mixColumnVec(state >> s16) << s16 | mixColumnVec(state & mask16);
+            return (mixColumnVec(state >> s16) << s16) | mixColumnVec(state & mask16);
         }
     };
 }
@@ -387,7 +387,7 @@ fn gfMul(x: u4, y: u4) u4 {
     const b1: u8 = (y8 >> 1) & 1;
     const b2: u8 = (y8 >> 2) & 1;
     const b3: u8 = (y8 >> 3) & 1;
-    return @truncate(b0 * x8 ^ b1 * xt1 ^ b2 * xt2 ^ b3 * xt3);
+    return @truncate((b0 * x8) ^ (b1 * xt1) ^ (b2 * xt2) ^ (b3 * xt3));
 }
 
 fn mixColumn(col: u16) u16 {
@@ -395,9 +395,9 @@ fn mixColumn(col: u16) u16 {
     const c1: u4 = @truncate(col >> 8);
     const c2: u4 = @truncate(col >> 4);
     const c3: u4 = @truncate(col);
-    return @as(u16, gfMul(c0, 0x2) ^ gfMul(c1, 0x1) ^ gfMul(c2, 0x1) ^ gfMul(c3, 0x9)) << 12 |
-        @as(u16, gfMul(c0, 0x1) ^ gfMul(c1, 0x4) ^ gfMul(c2, 0xf) ^ gfMul(c3, 0x1)) << 8 |
-        @as(u16, gfMul(c0, 0xd) ^ gfMul(c1, 0x9) ^ gfMul(c2, 0x4) ^ gfMul(c3, 0x1)) << 4 |
+    return (@as(u16, gfMul(c0, 0x2) ^ gfMul(c1, 0x1) ^ gfMul(c2, 0x1) ^ gfMul(c3, 0x9)) << 12) |
+        (@as(u16, gfMul(c0, 0x1) ^ gfMul(c1, 0x4) ^ gfMul(c2, 0xf) ^ gfMul(c3, 0x1)) << 8) |
+        (@as(u16, gfMul(c0, 0xd) ^ gfMul(c1, 0x9) ^ gfMul(c2, 0x4) ^ gfMul(c3, 0x1)) << 4) |
         @as(u16, gfMul(c0, 0x1) ^ gfMul(c1, 0xd) ^ gfMul(c2, 0x1) ^ gfMul(c3, 0x2));
 }
 
@@ -421,13 +421,13 @@ fn princeMix(comptime rotation: u2, col: u16) u16 {
 }
 
 fn princeMixLayer(state: u128) u128 {
-    return @as(u128, princeMix(0, @truncate(state >> 112))) << 112 |
-        @as(u128, princeMix(1, @truncate(state >> 96))) << 96 |
-        @as(u128, princeMix(1, @truncate(state >> 80))) << 80 |
-        @as(u128, princeMix(0, @truncate(state >> 64))) << 64 |
-        @as(u128, princeMix(0, @truncate(state >> 48))) << 48 |
-        @as(u128, princeMix(1, @truncate(state >> 32))) << 32 |
-        @as(u128, princeMix(1, @truncate(state >> 16))) << 16 |
+    return (@as(u128, princeMix(0, @truncate(state >> 112))) << 112) |
+        (@as(u128, princeMix(1, @truncate(state >> 96))) << 96) |
+        (@as(u128, princeMix(1, @truncate(state >> 80))) << 80) |
+        (@as(u128, princeMix(0, @truncate(state >> 64))) << 64) |
+        (@as(u128, princeMix(0, @truncate(state >> 48))) << 48) |
+        (@as(u128, princeMix(1, @truncate(state >> 32))) << 32) |
+        (@as(u128, princeMix(1, @truncate(state >> 16))) << 16) |
         @as(u128, princeMix(0, @truncate(state)));
 }
 
@@ -527,13 +527,13 @@ test "shift rows is involutory" {
 
 test "mix columns" {
     const state: u32 = 0x12345678;
-    try testing.expectEqual(@as(u32, 0x1f43fd89), @as(u32, mixColumn(@truncate(state >> 16))) << 16 | mixColumn(@truncate(state)));
+    try testing.expectEqual(@as(u32, 0x1f43fd89), (@as(u32, mixColumn(@truncate(state >> 16))) << 16) | mixColumn(@truncate(state)));
 }
 
 test "mix columns is involutory" {
     const s1: u32 = 0x12345678;
-    const s2 = @as(u32, mixColumn(@truncate(s1 >> 16))) << 16 | mixColumn(@truncate(s1));
-    try testing.expectEqual(s1, @as(u32, mixColumn(@truncate(s2 >> 16))) << 16 | mixColumn(@truncate(s2)));
+    const s2 = (@as(u32, mixColumn(@truncate(s1 >> 16))) << 16) | mixColumn(@truncate(s1));
+    try testing.expectEqual(s1, (@as(u32, mixColumn(@truncate(s2 >> 16))) << 16) | mixColumn(@truncate(s2)));
 }
 
 test "wide substitution" {
