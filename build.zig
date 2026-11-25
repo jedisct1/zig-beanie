@@ -100,7 +100,6 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    b.installArtifact(bench);
 
     const bench_step = b.step("bench", "Run benchmarks");
     const run_bench = b.addRunArtifact(bench);
